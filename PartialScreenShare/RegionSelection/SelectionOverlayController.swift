@@ -30,6 +30,10 @@ final class SelectionOverlayController {
         }
 
         windows.first?.makeKey()
+
+        // Signal "you're selecting a region" the same way the built-in
+        // screenshot tool (Cmd+Shift+4) does, instead of the default arrow.
+        NSCursor.crosshair.set()
     }
 
     private func finish(with rect: CGRect, screen: NSScreen) {
@@ -46,5 +50,6 @@ final class SelectionOverlayController {
         windows.forEach { $0.orderOut(nil) }
         windows.removeAll()
         completion = nil
+        NSCursor.arrow.set()
     }
 }

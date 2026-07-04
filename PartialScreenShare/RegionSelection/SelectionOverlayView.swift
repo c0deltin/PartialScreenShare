@@ -16,6 +16,11 @@ final class SelectionOverlayView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
 
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .crosshair)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         dimColor.setFill()
         bounds.fill()

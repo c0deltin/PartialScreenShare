@@ -3,13 +3,14 @@ import ScreenCaptureKit
 
 /// Ties one user-selected region to one `CaptureEngine` + one `MirrorWindow`
 /// and owns their lifecycle.
-final class CaptureSession {
+final class CaptureSession: NSObject {
     let title: String
     private let regionInScreenCoordinates: CGRect
     private let screen: NSScreen
 
     private let engine = CaptureEngine()
     private var mirrorWindow: MirrorWindow?
+    private var isStopped = false
 
     var onStop: (() -> Void)?
 
@@ -17,11 +18,12 @@ final class CaptureSession {
         self.title = title
         self.regionInScreenCoordinates = regionInScreenCoordinates
         self.screen = screen
+        super.init()
     }
 
     func start() {
         let window = MirrorWindow(title: "Partial Share — \(title)", aspectSize: regionInScreenCoordinates.size)
-        window.delegate = nil
+        window.delegate = self
         window.makeKeyAndOrderFront(nil)
         mirrorWindow = window
 
@@ -46,9 +48,18 @@ final class CaptureSession {
         }
     }
 
+    /// Triggered from the "Stop" menu item. Closing the window (rather than
+    /// tearing down the capture directly) routes through `windowWillClose`
+    /// below, so both this path and the user clicking the window's own close
+    /// button converge on the same teardown logic.
     func stop() {
-        engine.stop()
         mirrorWindow?.close()
+    }
+
+    private func stopCaptureAndNotify() {
+        guard !isStopped else { return }
+        isStopped = true
+        engine.stop()
         mirrorWindow = nil
         onStop?()
     }
@@ -70,5 +81,14 @@ final class CaptureSession {
             return []
         }
         return content.windows.filter { $0.windowID == CGWindowID(window.windowNumber) }
+    }
+}
+
+extension CaptureSession: NSWindowDelegate {
+    /// Fires whether the mirror window was closed via the menu bar's "Stop"
+    /// item or the user clicking the window's own close button — either way,
+    /// the capture must stop so we don't keep recording after the window is gone.
+    func windowWillClose(_ notification: Notification) {
+        stopCaptureAndNotify()
     }
 }
