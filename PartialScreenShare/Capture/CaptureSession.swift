@@ -27,8 +27,10 @@ final class CaptureSession: NSObject {
         window.makeKeyAndOrderFront(nil)
         mirrorWindow = window
 
+        let mirrorWindowID = CGWindowID(window.windowNumber)
+
         Task {
-            let excluded = await CaptureSession.resolveSCWindow(for: window)
+            let excluded = await CaptureSession.resolveSCWindow(id: mirrorWindowID)
 
             engine.onFrame = { [weak self] sampleBuffer in
                 DispatchQueue.main.async {
@@ -76,11 +78,25 @@ final class CaptureSession: NSObject {
     /// so it can be excluded from its own capture — without this, sharing the
     /// mirror window in a call would create an infinite hall-of-mirrors as
     /// soon as the region overlaps the mirror window itself.
-    private static func resolveSCWindow(for window: NSWindow) async -> [SCWindow] {
-        guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) else {
-            return []
+    ///
+    /// Retries briefly because `makeKeyAndOrderFront` returns before the
+    /// WindowServer has necessarily finished registering the window —
+    /// querying `SCShareableContent` too early can come back without it,
+    /// which silently skips the exclusion for that session (the window then
+    /// intermittently shows up inside its own capture).
+    private static func resolveSCWindow(id: CGWindowID, maxAttempts: Int = 10) async -> [SCWindow] {
+        for attempt in 0..<maxAttempts {
+            if let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) {
+                let matches = content.windows.filter { $0.windowID == id }
+                if !matches.isEmpty {
+                    return matches
+                }
+            }
+            if attempt < maxAttempts - 1 {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
         }
-        return content.windows.filter { $0.windowID == CGWindowID(window.windowNumber) }
+        return []
     }
 }
 
