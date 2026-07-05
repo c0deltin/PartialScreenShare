@@ -36,6 +36,10 @@ final class StatusItemController: NSObject {
         }
 
         menu.addItem(.separator())
+        menu.addItem(withTitle: "Preferences…", action: #selector(showPreferences), keyEquivalent: ",")
+            .target = self
+
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Quit PartialScreenShare", action: #selector(quit), keyEquivalent: "q")
             .target = self
 
@@ -75,6 +79,10 @@ final class StatusItemController: NSObject {
     @objc private func stopSession(_ sender: NSMenuItem) {
         guard let session = sender.representedObject as? CaptureSession else { return }
         session.stop()
+    }
+
+    @objc private func showPreferences() {
+        PreferencesWindowController.shared.show()
     }
 
     @objc private func quit() {

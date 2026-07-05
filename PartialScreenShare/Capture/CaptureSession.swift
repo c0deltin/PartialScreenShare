@@ -10,6 +10,7 @@ final class CaptureSession: NSObject {
 
     private let engine = CaptureEngine()
     private var mirrorWindow: MirrorWindow?
+    private var borderWindow: RegionBorderWindow?
     private var isStopped = false
 
     var onStop: (() -> Void)?
@@ -27,10 +28,21 @@ final class CaptureSession: NSObject {
         window.makeKeyAndOrderFront(nil)
         mirrorWindow = window
 
-        let mirrorWindowID = CGWindowID(window.windowNumber)
+        var excludedIDs: Set<CGWindowID> = [CGWindowID(window.windowNumber)]
+
+        // Whether the border shows at all is decided once, here, at session
+        // start — not re-evaluated live — since hiding/showing it mid-session
+        // would also require reconfiguring the already-running SCStream's
+        // content filter to keep the exclusion in sync.
+        if BorderPreference.shared.isEnabled {
+            let border = RegionBorderWindow(region: regionInScreenCoordinates)
+            border.orderFront(nil)
+            borderWindow = border
+            excludedIDs.insert(CGWindowID(border.windowNumber))
+        }
 
         Task {
-            let excluded = await CaptureSession.resolveSCWindow(id: mirrorWindowID)
+            let excluded = await CaptureSession.resolveSCWindows(ids: excludedIDs)
 
             engine.onFrame = { [weak self] sampleBuffer in
                 DispatchQueue.main.async {
@@ -63,6 +75,8 @@ final class CaptureSession: NSObject {
         isStopped = true
         engine.stop()
         mirrorWindow = nil
+        borderWindow?.close()
+        borderWindow = nil
         onStop?()
     }
 
@@ -74,29 +88,32 @@ final class CaptureSession: NSObject {
         stop()
     }
 
-    /// Looks up the `SCWindow` matching our own mirror window's `windowNumber`
-    /// so it can be excluded from its own capture — without this, sharing the
+    /// Looks up the `SCWindow`s matching our own mirror + border windows so
+    /// they can be excluded from the capture — without this, sharing the
     /// mirror window in a call would create an infinite hall-of-mirrors as
-    /// soon as the region overlaps the mirror window itself.
+    /// soon as the region overlaps the mirror window itself, and the border
+    /// would show up framing the shared content.
     ///
-    /// Retries briefly because `makeKeyAndOrderFront` returns before the
-    /// WindowServer has necessarily finished registering the window —
-    /// querying `SCShareableContent` too early can come back without it,
-    /// which silently skips the exclusion for that session (the window then
-    /// intermittently shows up inside its own capture).
-    private static func resolveSCWindow(id: CGWindowID, maxAttempts: Int = 10) async -> [SCWindow] {
+    /// Retries briefly because `makeKeyAndOrderFront`/`orderFront` return
+    /// before the WindowServer has necessarily finished registering the
+    /// window — querying `SCShareableContent` too early can come back
+    /// without one or both of them, which silently skips the exclusion for
+    /// that session (the window then intermittently shows up inside its own
+    /// capture).
+    private static func resolveSCWindows(ids: Set<CGWindowID>, maxAttempts: Int = 10) async -> [SCWindow] {
+        var lastMatches: [SCWindow] = []
         for attempt in 0..<maxAttempts {
             if let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) {
-                let matches = content.windows.filter { $0.windowID == id }
-                if !matches.isEmpty {
-                    return matches
+                lastMatches = content.windows.filter { ids.contains($0.windowID) }
+                if lastMatches.count == ids.count {
+                    return lastMatches
                 }
             }
             if attempt < maxAttempts - 1 {
                 try? await Task.sleep(nanoseconds: 50_000_000)
             }
         }
-        return []
+        return lastMatches
     }
 }
 
